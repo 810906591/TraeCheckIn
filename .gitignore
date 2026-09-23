@@ -1,0 +1,21 @@
+# 构建产物
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+
+# 日志与运行状态
+logs/
+state/
+*.log
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# 敏感配置（真实 Token / 账号信息，参考 appsettings.example.json）
+src/**/appsettings.json
