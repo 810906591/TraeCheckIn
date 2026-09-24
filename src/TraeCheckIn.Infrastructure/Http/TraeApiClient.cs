@@ -98,7 +98,8 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
             return null;
         }
 
-        return await SendAndEvaluateAsync(HttpMethod.Get.Method, _options.StatusUrl, body: null, contentType: null, token, cancellationToken);
+        var method = string.IsNullOrWhiteSpace(_options.StatusMethod) ? "GET" : _options.StatusMethod;
+        return await SendAndEvaluateAsync(method, _options.StatusUrl, _options.StatusBody, _options.StatusBody is null ? null : _options.CheckInContentType, token, cancellationToken);
     }
 
     /// <summary>释放 HTTP 客户端资源</summary>
@@ -134,8 +135,8 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
         var (statusCode, responseBody) = await SendAsync(new HttpMethod(method.ToUpperInvariant()), url, content, token, cancellationToken);
 
         var result = EvaluateResponse(statusCode, responseBody);
-        _logger.LogInformation("接口 {Url} 返回 HTTP {StatusCode}，评估结果：成功={Success}，已签到={Already}",
-            url, statusCode, result.IsSuccess, result.IsAlreadyCheckedIn);
+        _logger.LogInformation("接口 {Url} 返回 HTTP {StatusCode}，评估结果：成功={Success}，已签到={Already}，认证失效={AuthFailure}",
+            url, statusCode, result.IsSuccess, result.IsAlreadyCheckedIn, result.IsAuthFailure);
         return result;
     }
 
@@ -175,19 +176,25 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
 
         var isSuccessCode = statusCode is >= 200 and < 300;
 
+        // 业务码层面的认证失效（如 Trae 返回 HTTP 200 + code:1001）优先判定，避免被误归类为普通签到失败
+        if (ContainsAny(responseBody, _options.AuthFailureKeywords))
+        {
+            return new CheckInApiResult(IsSuccess: false, IsAlreadyCheckedIn: false, IsAuthFailure: true, statusCode, responseBody);
+        }
+
         // 已签到关键字优先判定，保证幂等语义
         if (ContainsAny(responseBody, _options.AlreadyCheckedKeywords))
         {
-            return new CheckInApiResult(isSuccessCode, IsAlreadyCheckedIn: true, statusCode, responseBody);
+            return new CheckInApiResult(IsSuccess: isSuccessCode, IsAlreadyCheckedIn: true, IsAuthFailure: false, statusCode, responseBody);
         }
 
         var keywordSuccess = ContainsAny(responseBody, _options.SuccessKeywords);
         if (isSuccessCode && (_options.SuccessKeywords.Length == 0 || keywordSuccess))
         {
-            return new CheckInApiResult(IsSuccess: true, IsAlreadyCheckedIn: false, statusCode, responseBody);
+            return new CheckInApiResult(IsSuccess: true, IsAlreadyCheckedIn: false, IsAuthFailure: false, statusCode, responseBody);
         }
 
-        return new CheckInApiResult(IsSuccess: false, IsAlreadyCheckedIn: false, statusCode, responseBody);
+        return new CheckInApiResult(IsSuccess: false, IsAlreadyCheckedIn: false, IsAuthFailure: false, statusCode, responseBody);
     }
 
     /// <summary>判断响应文本是否包含任一关键字</summary>

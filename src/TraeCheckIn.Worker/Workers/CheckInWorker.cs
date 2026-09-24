@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using TraeCheckIn.Application.Configuration;
 using TraeCheckIn.Application.Services;
 using TraeCheckIn.Infrastructure.Scheduling;
 using TraeCheckIn.Worker.Options;
@@ -12,6 +14,7 @@ public sealed class CheckInWorker : BackgroundService
     private readonly CheckInAppService _checkInAppService;
     private readonly NextRunCalculator _nextRunCalculator;
     private readonly WorkerOptions _workerOptions;
+    private readonly TraeAccountOptions _accountOptions;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<CheckInWorker> _logger;
     private readonly IReadOnlyList<TimeOnly> _dailyTimes;
@@ -20,18 +23,21 @@ public sealed class CheckInWorker : BackgroundService
     /// <param name="checkInAppService">签到用例服务</param>
     /// <param name="nextRunCalculator">触发时间计算器</param>
     /// <param name="workerOptions">运行选项</param>
+    /// <param name="accountOptions">账号凭证配置</param>
     /// <param name="lifetime">宿主生命周期</param>
     /// <param name="logger">日志记录器</param>
     public CheckInWorker(
         CheckInAppService checkInAppService,
         NextRunCalculator nextRunCalculator,
         WorkerOptions workerOptions,
+        IOptions<TraeAccountOptions> accountOptions,
         IHostApplicationLifetime lifetime,
         ILogger<CheckInWorker> logger)
     {
         _checkInAppService = checkInAppService;
         _nextRunCalculator = nextRunCalculator;
         _workerOptions = workerOptions;
+        _accountOptions = accountOptions.Value;
         _lifetime = lifetime;
         _logger = logger;
         _dailyTimes = ParseDailyTimes(workerOptions.Times);
@@ -41,6 +47,9 @@ public sealed class CheckInWorker : BackgroundService
     /// <param name="stoppingToken">停止令牌</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // 启动即评估凭证有效期，长期驻留的服务若凭证临期能第一时间在日志中暴露
+        TokenExpiryAdvisor.WarnIfNearExpiry(_logger, _accountOptions.Token);
+
         if (_workerOptions.RunOnce)
         {
             await RunOnceAsync(stoppingToken);

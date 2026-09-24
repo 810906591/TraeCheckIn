@@ -33,6 +33,12 @@ public sealed class CheckInOptions
     /// <summary>查询当日签到状态的接口相对路径（可选，留空则仅依赖本地状态判断是否重复签到）</summary>
     public string StatusUrl { get; set; } = string.Empty;
 
+    /// <summary>状态查询请求方法（GET 或 POST）</summary>
+    public string StatusMethod { get; set; } = "GET";
+
+    /// <summary>状态查询请求体（可选，留空表示不携带请求体）</summary>
+    public string? StatusBody { get; set; }
+
     /// <summary>认证请求头名称（如 Authorization 或 token）</summary>
     public string AuthHeaderName { get; set; } = "Authorization";
 
@@ -44,6 +50,9 @@ public sealed class CheckInOptions
 
     /// <summary>响应包含以下关键字时判定为当日已签到</summary>
     public string[] AlreadyCheckedKeywords { get; set; } = ["已签到", "重复签到"];
+
+    /// <summary>响应包含以下关键字时判定为认证凭证失效（如业务码 code:1001）；为空则不启用该判定</summary>
+    public string[] AuthFailureKeywords { get; set; } = [];
 
     /// <summary>瞬时错误最大尝试次数（含首次）</summary>
     public int MaxRetry { get; set; } = 3;

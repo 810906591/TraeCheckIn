@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using TraeCheckIn.Application.Configuration;
 using TraeCheckIn.Application.Interfaces;
 using TraeCheckIn.Application.Models;
 using TraeCheckIn.Domain.Entities;
@@ -12,18 +14,21 @@ public sealed class CheckInAppService
     private readonly CheckInExecutor _executor;
     private readonly ICheckInStateStore _stateStore;
     private readonly INotificationService _notificationService;
+    private readonly TraeAccountOptions _accountOptions;
     private readonly ILogger<CheckInAppService> _logger;
 
     /// <summary>创建签到用例服务</summary>
     /// <param name="executor">签到执行器</param>
     /// <param name="stateStore">签到状态仓储</param>
     /// <param name="notificationService">通知门面服务</param>
+    /// <param name="accountOptions">账号凭证配置</param>
     /// <param name="logger">日志记录器</param>
-    public CheckInAppService(CheckInExecutor executor, ICheckInStateStore stateStore, INotificationService notificationService, ILogger<CheckInAppService> logger)
+    public CheckInAppService(CheckInExecutor executor, ICheckInStateStore stateStore, INotificationService notificationService, IOptions<TraeAccountOptions> accountOptions, ILogger<CheckInAppService> logger)
     {
         _executor = executor;
         _stateStore = stateStore;
         _notificationService = notificationService;
+        _accountOptions = accountOptions.Value;
         _logger = logger;
     }
 
@@ -32,6 +37,9 @@ public sealed class CheckInAppService
     /// <returns>签到结果记录</returns>
     public async Task<CheckInRecord> ExecuteAsync(CancellationToken cancellationToken)
     {
+        // 每次执行签到前评估凭证有效期：长期驻留的服务跨天运行时也能暴露临期状态
+        TokenExpiryAdvisor.WarnIfNearExpiry(_logger, _accountOptions.Token);
+
         if (await IsAlreadyCheckedInTodayAsync(cancellationToken))
         {
             _logger.LogInformation("今日已完成签到，跳过本次执行");

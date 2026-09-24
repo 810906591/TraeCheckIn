@@ -42,6 +42,13 @@ public sealed class CheckInExecutor
         {
             var token = await _authService.GetValidTokenAsync(forceRefresh: false, cancellationToken);
             var result = await _apiClient.QueryStatusAsync(token, cancellationToken);
+            if (result is { IsAuthFailure: true })
+            {
+                // 凭证已失效时状态不可信，交由后续签到流程给出明确的认证失效结论
+                _logger.LogWarning("远程状态查询返回认证失效，无法确定当日签到状态");
+                return null;
+            }
+
             return result?.IsAlreadyCheckedIn;
         }
         catch (CheckInException ex)
@@ -108,6 +115,12 @@ public sealed class CheckInExecutor
     {
         var token = await _authService.GetValidTokenAsync(forceRefreshToken, cancellationToken);
         var result = await _apiClient.CheckInAsync(token, cancellationToken);
+
+        if (result.IsAuthFailure)
+        {
+            // 认证失效属于确定性失败，重试也无法恢复，直接给出可操作的结论
+            return BuildRecord(CheckInStatus.Failed, "认证凭证已失效，请在 Trae IDE 中重新抓取 Token 并更新 TraeAccount:Token 配置（凭证有效期约 14 天）", result.RawBody);
+        }
 
         if (result.IsAlreadyCheckedIn)
         {
