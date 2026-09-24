@@ -20,4 +20,10 @@
     <ProjectReference Include="..\TraeCheckIn.Application\TraeCheckIn.Application.csproj" />
     <ProjectReference Include="..\TraeCheckIn.Infrastructure\TraeCheckIn.Infrastructure.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

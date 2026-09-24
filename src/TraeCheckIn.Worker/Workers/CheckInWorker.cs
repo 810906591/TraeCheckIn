@@ -93,9 +93,11 @@ public sealed class CheckInWorker : BackgroundService
         _lifetime.StopApplication();
     }
 
-    /// <summary>定时调度循环：等待下一个时间点触发签到，触发后推进一分钟避免重复执行</summary>
+    /// <summary>定时调度循环：启动时先补偿错过的触发点，随后循环等待下一个时间点触发签到</summary>
     private async Task ScheduleLoopAsync(CancellationToken stoppingToken)
     {
+        await CatchUpMissedRunAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var next = _nextRunCalculator.GetNextOccurrence(DateTime.Now, _dailyTimes);
@@ -119,6 +121,17 @@ public sealed class CheckInWorker : BackgroundService
             {
                 return;
             }
+        }
+    }
+
+    /// <summary>启动补偿：今日配置的时间点均已错过时立即补检一次，避免重启导致当天漏签（内部含当日去重，已完成则自动跳过）</summary>
+    private async Task CatchUpMissedRunAsync(CancellationToken stoppingToken)
+    {
+        var next = _nextRunCalculator.GetNextOccurrence(DateTime.Now, _dailyTimes);
+        if (next is not null && next.Value.Date > DateTime.Now.Date)
+        {
+            _logger.LogInformation("今日签到时间点已全部错过，启动时立即补检一次");
+            await ExecuteCheckInAsync(stoppingToken);
         }
     }
 
