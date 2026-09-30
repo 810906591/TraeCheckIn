@@ -5,6 +5,9 @@ namespace TraeCheckIn.Domain.Entities;
 /// <summary>签到执行记录（一次签到动作的完整快照，用于日志与通知）</summary>
 public sealed class CheckInRecord
 {
+    /// <summary>账号名称（多账号场景标识本次签到所属账号）</summary>
+    public string AccountName { get; init; } = string.Empty;
+
     /// <summary>签到执行时间（本地时间）</summary>
     public DateTime Time { get; init; } = DateTime.Now;
 

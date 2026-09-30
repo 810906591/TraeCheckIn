@@ -19,8 +19,8 @@ public sealed class LogNotifier : ICheckInNotifier
     /// <inheritdoc />
     public Task NotifyCheckInAsync(CheckInRecord record, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("[签到通知] 时间：{Time:yyyy-MM-dd HH:mm:ss}，状态：{Status}，摘要：{Message}，详情：{Detail}",
-            record.Time, record.Status, record.Message, record.Detail ?? "-");
+        _logger.LogInformation("[签到通知] 账号：{Account}，时间：{Time:yyyy-MM-dd HH:mm:ss}，状态：{Status}，摘要：{Message}，详情：{Detail}",
+            record.AccountName, record.Time, record.Status, record.Message, record.Detail ?? "-");
         return Task.CompletedTask;
     }
 }

@@ -28,10 +28,11 @@ public sealed class CheckInExecutor
         _logger = logger;
     }
 
-    /// <summary>查询远程当日签到状态（未配置 StatusUrl 或查询失败时返回 null，不阻断签到主流程）</summary>
+    /// <summary>查询指定账号的远程当日签到状态（未配置 StatusUrl 或查询失败时返回 null，不阻断签到主流程）</summary>
+    /// <param name="account">账号凭证配置</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>true 表示已签到；false 表示未签到；null 表示无法确定</returns>
-    public async Task<bool?> TryQueryCheckedTodayAsync(CancellationToken cancellationToken)
+    public async Task<bool?> TryQueryCheckedTodayAsync(TraeAccountOptions account, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.StatusUrl))
         {
@@ -40,8 +41,8 @@ public sealed class CheckInExecutor
 
         try
         {
-            var token = await _authService.GetValidTokenAsync(forceRefresh: false, cancellationToken);
-            var result = await _apiClient.QueryStatusAsync(token, cancellationToken);
+            var token = await _authService.GetValidTokenAsync(account, forceRefresh: false, cancellationToken);
+            var result = await _apiClient.QueryStatusAsync(account, token, cancellationToken);
             if (result is { IsAuthFailure: true })
             {
                 // 凭证已失效时状态不可信，交由后续签到流程给出明确的认证失效结论
@@ -59,10 +60,11 @@ public sealed class CheckInExecutor
         }
     }
 
-    /// <summary>执行签到（含重试机制），完全失败时返回 <see cref="CheckInStatus.Failed"/> 记录而非抛出异常</summary>
+    /// <summary>为指定账号执行签到（含重试机制），完全失败时返回 <see cref="CheckInStatus.Failed"/> 记录而非抛出异常</summary>
+    /// <param name="account">账号凭证配置</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>签到结果记录</returns>
-    public async Task<CheckInRecord> ExecuteAsync(CancellationToken cancellationToken)
+    public async Task<CheckInRecord> ExecuteAsync(TraeAccountOptions account, CancellationToken cancellationToken)
     {
         var maxRetry = Math.Max(1, _options.MaxRetry);
         string? lastDetail = null;
@@ -71,7 +73,7 @@ public sealed class CheckInExecutor
         {
             try
             {
-                var record = await ExecuteSingleAttemptAsync(forceRefreshToken: attempt > 1, cancellationToken);
+                var record = await ExecuteSingleAttemptAsync(account, forceRefreshToken: attempt > 1, cancellationToken);
                 if (record is not null)
                 {
                     return record;
@@ -110,16 +112,16 @@ public sealed class CheckInExecutor
         };
     }
 
-    /// <summary>执行单次签到尝试；业务性失败（接口明确拒绝）直接返回 Failed 记录，不再重试</summary>
-    private async Task<CheckInRecord?> ExecuteSingleAttemptAsync(bool forceRefreshToken, CancellationToken cancellationToken)
+    /// <summary>执行指定账号的单次签到尝试；业务性失败（接口明确拒绝）直接返回 Failed 记录，不再重试</summary>
+    private async Task<CheckInRecord?> ExecuteSingleAttemptAsync(TraeAccountOptions account, bool forceRefreshToken, CancellationToken cancellationToken)
     {
-        var token = await _authService.GetValidTokenAsync(forceRefreshToken, cancellationToken);
-        var result = await _apiClient.CheckInAsync(token, cancellationToken);
+        var token = await _authService.GetValidTokenAsync(account, forceRefreshToken, cancellationToken);
+        var result = await _apiClient.CheckInAsync(account, token, cancellationToken);
 
         if (result.IsAuthFailure)
         {
             // 认证失效属于确定性失败，重试也无法恢复，直接给出可操作的结论
-            return BuildRecord(CheckInStatus.Failed, "认证凭证已失效，请在 Trae IDE 中重新抓取 Token 并更新 TraeAccount:Token 配置（凭证有效期约 14 天）", result.RawBody);
+            return BuildRecord(CheckInStatus.Failed, $"认证凭证已失效，请在 Trae IDE 中重新抓取 Token 并更新账号（{account.Name}）的 Token 配置（凭证有效期约 14 天）", result.RawBody);
         }
 
         if (result.IsAlreadyCheckedIn)

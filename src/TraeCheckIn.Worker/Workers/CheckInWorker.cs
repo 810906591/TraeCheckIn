@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TraeCheckIn.Application.Configuration;
 using TraeCheckIn.Application.Services;
+using TraeCheckIn.Domain.Enums;
 using TraeCheckIn.Infrastructure.Scheduling;
 using TraeCheckIn.Worker.Options;
 
@@ -47,8 +48,13 @@ public sealed class CheckInWorker : BackgroundService
     /// <param name="stoppingToken">停止令牌</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // 启动即评估凭证有效期，长期驻留的服务若凭证临期能第一时间在日志中暴露
-        TokenExpiryAdvisor.WarnIfNearExpiry(_logger, _accountOptions.Token);
+        // 启动即评估各账号凭证有效期，长期驻留的服务若凭证临期能第一时间在日志中暴露
+        var accounts = _accountOptions.ResolveAccounts();
+        _logger.LogInformation("本次签到共 {Count} 个账号", accounts.Count);
+        foreach (var account in accounts)
+        {
+            TokenExpiryAdvisor.WarnIfNearExpiry(_logger, account.Token);
+        }
 
         if (_workerOptions.RunOnce)
         {
@@ -140,8 +146,14 @@ public sealed class CheckInWorker : BackgroundService
     {
         try
         {
-            var record = await _checkInAppService.ExecuteAsync(stoppingToken);
-            _logger.LogInformation("本次签到流程结束：{Status} - {Message}", record.Status, record.Message);
+            var records = await _checkInAppService.ExecuteAsync(stoppingToken);
+            foreach (var record in records)
+            {
+                _logger.LogInformation("账号（{Account}）签到流程结束：{Status} - {Message}", record.AccountName, record.Status, record.Message);
+            }
+
+            var failed = records.Count(static r => r.Status == CheckInStatus.Failed);
+            _logger.LogInformation("本次签到流程全部结束：共 {Total} 个账号，失败 {Failed} 个", records.Count, failed);
         }
         catch (OperationCanceledException)
         {

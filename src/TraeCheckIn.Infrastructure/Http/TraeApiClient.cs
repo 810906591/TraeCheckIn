@@ -16,19 +16,18 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly CheckInOptions _options;
-    private readonly TraeAccountOptions _accountOptions;
+    private readonly string? _userAgent;
+    private readonly IReadOnlyDictionary<string, string> _globalHeaders;
     private readonly ILogger<TraeApiClient> _logger;
 
     /// <summary>创建平台接口客户端</summary>
     /// <param name="httpOptions">HTTP 行为配置</param>
     /// <param name="checkInOptions">签到接口配置</param>
-    /// <param name="accountOptions">账号凭证配置</param>
     /// <param name="logger">日志记录器</param>
     /// <exception cref="InvalidOperationException">关键接口地址未配置时抛出</exception>
-    public TraeApiClient(IOptions<HttpOptions> httpOptions, IOptions<CheckInOptions> checkInOptions, IOptions<TraeAccountOptions> accountOptions, ILogger<TraeApiClient> logger)
+    public TraeApiClient(IOptions<HttpOptions> httpOptions, IOptions<CheckInOptions> checkInOptions, ILogger<TraeApiClient> logger)
     {
         _options = checkInOptions.Value;
-        _accountOptions = accountOptions.Value;
         _logger = logger;
 
         var http = httpOptions.Value;
@@ -42,6 +41,10 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
             throw new InvalidOperationException("请在 appsettings.json 的 CheckIn:CheckInUrl 中配置签到接口地址");
         }
 
+        // 请求头改为每次请求动态应用（支持账号级覆盖），此处仅保留全局配置
+        _userAgent = http.UserAgent;
+        _globalHeaders = http.Headers;
+
         var handler = new SocketsHttpHandler
         {
             UseCookies = true,
@@ -54,20 +57,18 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
             BaseAddress = new Uri(http.BaseUrl),
             Timeout = TimeSpan.FromSeconds(Math.Max(5, http.TimeoutSeconds))
         };
-
-        ConfigureBrowserHeaders(http);
     }
 
     /// <inheritdoc />
-    public async Task<string> LoginAsync(CancellationToken cancellationToken)
+    public async Task<string> LoginAsync(TraeAccountOptions account, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.LoginUrl))
         {
             throw new LoginException("认证方式为账号密码，但未配置 CheckIn:LoginUrl");
         }
 
-        var content = new StringContent(BuildLoginBody(), Encoding.UTF8, _options.LoginContentType);
-        var (statusCode, responseBody) = await SendAsync(HttpMethod.Post, _options.LoginUrl, content, token: null, cancellationToken);
+        var content = new StringContent(BuildLoginBody(account), Encoding.UTF8, _options.LoginContentType);
+        var (statusCode, responseBody) = await SendAsync(HttpMethod.Post, _options.LoginUrl, content, token: null, account.Headers, cancellationToken);
 
         if (statusCode is < 200 or >= 300)
         {
@@ -85,13 +86,13 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
     }
 
     /// <inheritdoc />
-    public Task<CheckInApiResult> CheckInAsync(string token, CancellationToken cancellationToken)
+    public Task<CheckInApiResult> CheckInAsync(TraeAccountOptions account, string token, CancellationToken cancellationToken)
     {
-        return SendAndEvaluateAsync(_options.CheckInMethod, _options.CheckInUrl, _options.CheckInBody, _options.CheckInContentType, token, cancellationToken);
+        return SendAndEvaluateAsync(_options.CheckInMethod, _options.CheckInUrl, _options.CheckInBody, _options.CheckInContentType, token, account.Headers, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<CheckInApiResult?> QueryStatusAsync(string token, CancellationToken cancellationToken)
+    public async Task<CheckInApiResult?> QueryStatusAsync(TraeAccountOptions account, string token, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.StatusUrl))
         {
@@ -99,7 +100,7 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
         }
 
         var method = string.IsNullOrWhiteSpace(_options.StatusMethod) ? "GET" : _options.StatusMethod;
-        return await SendAndEvaluateAsync(method, _options.StatusUrl, _options.StatusBody, _options.StatusBody is null ? null : _options.CheckInContentType, token, cancellationToken);
+        return await SendAndEvaluateAsync(method, _options.StatusUrl, _options.StatusBody, _options.StatusBody is null ? null : _options.CheckInContentType, token, account.Headers, cancellationToken);
     }
 
     /// <summary>释放 HTTP 客户端资源</summary>
@@ -108,31 +109,47 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
         _httpClient.Dispose();
     }
 
-    /// <summary>按配置模板构造登录请求体（{{username}} / {{password}} 占位符替换）</summary>
-    private string BuildLoginBody() =>
+    /// <summary>按配置模板构造指定账号的登录请求体（{{username}} / {{password}} 占位符替换）</summary>
+    private string BuildLoginBody(TraeAccountOptions account) =>
         _options.LoginBodyTemplate
-            .Replace("{{username}}", _accountOptions.Username, StringComparison.Ordinal)
-            .Replace("{{password}}", _accountOptions.Password, StringComparison.Ordinal);
+            .Replace("{{username}}", account.Username, StringComparison.Ordinal)
+            .Replace("{{password}}", account.Password, StringComparison.Ordinal);
 
-    /// <summary>配置模拟浏览器的默认请求头</summary>
-    private void ConfigureBrowserHeaders(HttpOptions http)
+    /// <summary>应用请求头：先写入全局浏览器头，再应用账号级覆盖（同名头先移除再添加，空值跳过以回退全局）</summary>
+    private void ApplyHeaders(HttpRequestMessage request, IReadOnlyDictionary<string, string>? headerOverrides)
     {
-        if (!string.IsNullOrWhiteSpace(http.UserAgent))
+        if (!string.IsNullOrWhiteSpace(_userAgent))
         {
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", http.UserAgent);
+            request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
         }
 
-        foreach (var (name, value) in http.Headers)
+        foreach (var (name, value) in _globalHeaders)
         {
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation(name, value);
+            request.Headers.TryAddWithoutValidation(name, value);
+        }
+
+        if (headerOverrides is null)
+        {
+            return;
+        }
+
+        foreach (var (name, value) in headerOverrides)
+        {
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            request.Headers.Remove(name);
+            request.Headers.TryAddWithoutValidation(name, value);
         }
     }
 
     /// <summary>发送请求并根据关键字评估响应结果</summary>
-    private async Task<CheckInApiResult> SendAndEvaluateAsync(string method, string url, string? body, string? contentType, string token, CancellationToken cancellationToken)
+    private async Task<CheckInApiResult> SendAndEvaluateAsync(string method, string url, string? body, string? contentType, string token, IReadOnlyDictionary<string, string>? headerOverrides, CancellationToken cancellationToken)
     {
         var content = body is null ? null : new StringContent(body, Encoding.UTF8, contentType ?? "application/json");
-        var (statusCode, responseBody) = await SendAsync(new HttpMethod(method.ToUpperInvariant()), url, content, token, cancellationToken);
+        var (statusCode, responseBody) = await SendAsync(new HttpMethod(method.ToUpperInvariant()), url, content, token, headerOverrides, cancellationToken);
 
         var result = EvaluateResponse(statusCode, responseBody);
         _logger.LogInformation("接口 {Url} 返回 HTTP {StatusCode}，评估结果：成功={Success}，已签到={Already}，认证失效={AuthFailure}",
@@ -141,9 +158,10 @@ public sealed class TraeApiClient : ITraeApiClient, IDisposable
     }
 
     /// <summary>发送 HTTP 请求并返回状态码与响应体；网络错误统一包装为 <see cref="NetworkException"/></summary>
-    private async Task<(int StatusCode, string Body)> SendAsync(HttpMethod method, string url, HttpContent? content, string? token, CancellationToken cancellationToken)
+    private async Task<(int StatusCode, string Body)> SendAsync(HttpMethod method, string url, HttpContent? content, string? token, IReadOnlyDictionary<string, string>? headerOverrides, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, url) { Content = content };
+        ApplyHeaders(request, headerOverrides);
         if (!string.IsNullOrEmpty(token))
         {
             request.Headers.TryAddWithoutValidation(_options.AuthHeaderName, _options.AuthHeaderTemplate.Replace("{token}", token, StringComparison.Ordinal));

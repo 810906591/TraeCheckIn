@@ -50,7 +50,7 @@ public sealed class EmailNotifier : ICheckInNotifier
         var message = new MailMessage
         {
             From = new MailAddress(smtp.From),
-            Subject = $"[Trae 自动签到] {record.Status} - {record.Time:yyyy-MM-dd HH:mm:ss}",
+            Subject = $"[Trae 自动签到] {record.AccountName} {record.Status} - {record.Time:yyyy-MM-dd HH:mm:ss}",
             Body = BuildBody(record),
             SubjectEncoding = Encoding.UTF8,
             BodyEncoding = Encoding.UTF8
@@ -68,6 +68,7 @@ public sealed class EmailNotifier : ICheckInNotifier
         $"""
         Trae 每日自动签到结果
 
+        账号：{record.AccountName}
         时间：{record.Time:yyyy-MM-dd HH:mm:ss}
         状态：{record.Status}
         摘要：{record.Message}
